@@ -1,48 +1,65 @@
-name: Deploy to Google Cloud Run
+name: 'Build and Deploy to Cloud Run'
 
 on:
   push:
-    branches:
-      - main  # Trigger the deployment when pushing to the main branch
+    branches: [ "main" ]
 
 env:
-  PROJECT_ID: "your-gcp-project-id"
-  REGION: "us-central1"  # Change this to your preferred region
-  SERVICE: "virtual-baseball-coach"  # Change this to your Cloud Run service name
-  GAR_NAME: "ghaction"  # Google Artifact Registry name
+  PROJECT_ID: poetic-planet-449502-i0
+  GAR_LOCATION: us-central1
+  GAR_NAME: ghaction
+  REGION: us-central1
+  SERVICE: virtual-baseball-coach
 
 jobs:
   deploy:
-    name: Build & Deploy
-    runs-on: ubuntu-latest
+    runs-on: 'ubuntu-latest'
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
 
     steps:
-      # Checkout the repository
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: 'Checkout'
+        uses: 'actions/checkout@v4'
 
-      # Authenticate with Google Cloud
-      - name: Authenticate with Google Cloud
-        id: auth
-        uses: google-github-actions/auth@v1
+      # Configure Workload Identity Federation and generate an access token.
+      #
+      # See https://github.com/google-github-actions/auth for more options,
+      # including authenticating via a JSON credentials file.
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          # workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/my-pool/providers/my-provider' # TODO: replace with your workload identity provider
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+          service_account: 'github-action@poetic-planet-449502-i0.iam.gserviceaccount.com'
 
-      # Configure Docker to use Google Cloud's Artifact Registry
-      - name: Configure Docker
-        run: gcloud auth configure-docker $REGION-docker.pkg.dev
+      # BEGIN - Docker auth and build
+      #
+      # If you already have a container image, you can omit these steps.
+      - name: 'Docker Auth'
+        run: |-
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      # Build and push the Docker image
-      - name: Build & Push Docker Image
+      - name: 'Build and Push Container'
         run: |
-          docker build -t $REGION-docker.pkg.dev/$PROJECT_ID/$GAR_NAME/$SERVICE:$GITHUB_SHA -f ./backend/Dockerfile ./backend
-          docker push $REGION-docker.pkg.dev/$PROJECT_ID/$GAR_NAME/$SERVICE:$GITHUB_SHA
+          DOCKER_TAG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_NAME }}/${{ env.SERVICE }}:${{ github.sha }}"
+          docker build -t "${DOCKER_TAG}" --file ./backend/Dockerfile ./backend  # Ensure the correct path
+          docker push "${DOCKER_TAG}"
+          
+      - name: 'Deploy to Cloud Run'
 
-      # Deploy to Cloud Run
-      - name: Deploy to Cloud Run
-        run: |
-          gcloud run deploy $SERVICE \
-            --image $REGION-docker.pkg.dev/$PROJECT_ID/$GAR_NAME/$SERVICE:$GITHUB_SHA \
-            --region $REGION \
-            --platform managed \
-            --allow-unauthenticated
+        # END - Docker auth and build
+
+        uses: 'google-github-actions/deploy-cloudrun@v2' # google-github-actions/deploy-cloudrun@v2
+        with:
+          service: '${{ env.SERVICE }}'
+          region: '${{ env.REGION }}'
+          # NOTE: If using a pre-built image, update the image name below:
+
+          image: '${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_NAME }}/${{ env.SERVICE }}:${{ github.sha }}'
+      # If required, use the Cloud Run URL output in later steps
+      # Log Cloud Run service URL
+      - name: 'Show Deployed URL'
+        run: gcloud run services describe ${{ env.SERVICE }} --region=${{ env.REGION }} --format='value(status.url)'
