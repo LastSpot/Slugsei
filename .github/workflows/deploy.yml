@@ -22,9 +22,8 @@ jobs:
 
       - name: Submit Cloud Build
         run: |
-          gcloud builds submit --config cloudbuild.yaml --region us-central1 .
-          # The "." at the end is crucial; it specifies the build context (the current directory).
+          gcloud builds submit --config cloudbuild.yaml --region us-central1 .  # The "." is CRUCIAL!
 
-      - name: Deploy to Cloud Run
+      - name: Deploy to Cloud Run (This runs *after* Cloud Build is finished)
         run: |
           gcloud run deploy slugseiai --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/slugseiai --platform managed --allow-unauthenticated --region us-central1
